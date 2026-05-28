@@ -57,11 +57,17 @@ func main() {
 			return
 		}
 
-		// 取得 AI 的文字回應
+		// ✨ 修正這裡：正確提取並轉換文字回應
 		var replyText string
 		if len(resp.Candidates) > 0 && resp.Candidates[0].Content != nil {
 			for _, part := range resp.Candidates[0].Content.Parts {
-				replyText += fmt.Sprintf("%v", part)
+				// 新版 SDK 提供 Text 欄位，或者我們可以使用型態斷言來安全取得字串
+				if textPart, ok := part.(genai.Text); ok {
+					replyText += string(textPart)
+				} else {
+					// 備用方案：如果不是 Text 型態，再嘗試用 fmt.Sprint 轉換
+					replyText += fmt.Sprint(part)
+				}
 			}
 		}
 

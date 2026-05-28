@@ -57,15 +57,15 @@ func main() {
 			return
 		}
 
-		// ✨ 修正這裡：正確提取並轉換文字回應
+		// ✨ 最新 SDK 的正確提取方式
 		var replyText string
 		if len(resp.Candidates) > 0 && resp.Candidates[0].Content != nil {
 			for _, part := range resp.Candidates[0].Content.Parts {
-				// 新版 SDK 提供 Text 欄位，或者我們可以使用型態斷言來安全取得字串
-				if textPart, ok := part.(genai.Text); ok {
-					replyText += string(textPart)
+				// 新版 SDK 的 Part 結構體通常直接內嵌了 Text 欄位
+				if part.Text != "" {
+					replyText += part.Text
 				} else {
-					// 備用方案：如果不是 Text 型態，再嘗試用 fmt.Sprint 轉換
+					// 備用方案：如果 Text 為空，嘗試將整段 part 轉為字串
 					replyText += fmt.Sprint(part)
 				}
 			}

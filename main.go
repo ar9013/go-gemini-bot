@@ -2,8 +2,8 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
+	"html/template"
 	"log"
 	"net/http"
 	"os"
@@ -11,72 +11,65 @@ import (
 	"google.golang.org/genai"
 )
 
-// 定義請求與回應的結構
-type ChatRequest struct {
-	Message string `json:"message"`
-}
+// 預先定義好 HTML 訊息片段的模板
+var msgTemplate = template.Must(template.New("messages").Parse(`
+	<div class="message user-message">{{.UserMsg}}</div>
+	<div class="message bot-message">{{.BotReply}}</div>
+`))
 
-type ChatResponse struct {
-	Reply string `json:"reply"`
+type ReplyData struct {
+	UserMsg  string
+	BotReply string
 }
 
 func main() {
-	// 1. 從環境變數獲取 Port，Railway 會自動注入這個變數
 	port := os.Getenv("PORT")
 	if port == "" {
 		port = "8080"
 	}
 
-	// 2. 初始化 Gemini 用戶端
-	// SDK 會自動從環境變數 GEMINI_API_KEY 中讀取金鑰
 	ctx := context.Background()
 	client, err := genai.NewClient(ctx, nil)
 	if err != nil {
 		log.Fatalf("無法初始化 Gemini 用戶端: %v", err)
 	}
 
-	// 3. 設定路由
-	http.HandleFunc("/chat", func(w http.ResponseWriter, r *http.Request) {
-		// 僅允許 POST 請求
-		if r.Method != http.MethodPost {
-			http.Error(w, "只支援 POST 請求", http.StatusMethodNotAllowed)
-			return
-		}
-
-		// 解析前端傳來的 JSON
-		var req ChatRequest
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			http.Error(w, "無效的 JSON 格式", http.StatusBadRequest)
-			return
-		}
-
-		// 呼叫 Gemini 模型 (使用推薦的 gemini-2.5-flash)
-		resp, err := client.Models.GenerateContent(ctx, "gemini-2.5-flash", genai.Text(req.Message), nil)
-		if err != nil {
-			http.Error(w, fmt.Sprintf("AI 產生回應失敗: %v", err), http.StatusInternalServerError)
-			return
-		}
-
-		// ✨ 最新 SDK 的正確提取方式
-		var replyText string
-		if len(resp.Candidates) > 0 && resp.Candidates[0].Content != nil {
-			for _, part := range resp.Candidates[0].Content.Parts {
-				// 新版 SDK 的 Part 結構體通常直接內嵌了 Text 欄位
-				if part.Text != "" {
-					replyText += part.Text
-				} else {
-					// 備用方案：如果 Text 為空，嘗試將整段 part 轉為字串
-					replyText += fmt.Sprint(part)
-				}
-			}
-		}
-
-		// 回傳 JSON 給前端
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(ChatResponse{Reply: replyText})
+	// 1. 路由：首頁，直接奉送 index.html
+	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		http.ServeFile(w, r, "index.html")
 	})
 
-	// 監聽並啟動服務
-	fmt.Printf("伺服器正在運行於 port %s...\n", port)
+	// 2. 路由：HTMX 呼叫的 API
+	http.HandleFunc("/chat", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
+			return
+		}
+
+		// HTMX 預設是用傳統表單格式 (Form Value) 傳送資料，不是 JSON 了
+		userMessage := r.FormValue("message")
+		if userMessage == "" {
+			return
+		}
+
+		// 呼叫 Gemini
+		resp, err := client.Models.GenerateContent(r.Context(), "gemini-2.5-flash", genai.Text(userMessage), nil)
+		botReply := ""
+		if err != nil {
+			botReply = fmt.Sprintf("錯誤: 暫時無法獲取回應 (%v)", err)
+		} else {
+			botReply = resp.Text()
+		}
+
+		// 直接渲染 HTML 片段回傳給 HTMX
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		data := ReplyData{
+			UserMsg:  userMessage,
+			BotReply: botReply,
+		}
+		msgTemplate.Execute(w, data)
+	})
+
+	fmt.Printf("HTMX 伺服器運行於 port %s...\n", port)
 	log.Fatal(http.ListenAndServe(":"+port, nil))
 }
